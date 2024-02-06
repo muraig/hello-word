@@ -23,6 +23,6 @@
 
 ########################################
 kubectl expose deployment {{ .Chart.Name }} -n default --type=LoadBalancer --name={{ .Chart.Name }}web --port=80 --target-port=80
-kubectl expose deployment {{ .Chart.Name }}web -n default -p '{"spec": {"type": "LoadBalancer", "externalIPs":["192.168.0.231"]}}'
+kubectl patch service {{ .Chart.Name }}web -n default -p '{"spec": {"type": "LoadBalancer", "externalIPs":["192.168.0.231"]}}'
 
 
