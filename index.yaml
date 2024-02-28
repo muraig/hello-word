@@ -3,9 +3,19 @@ entries:
   hello-word:
   - apiVersion: v2
     appVersion: 1.24.0
-    created: "2024-02-06T20:37:52.458966+08:00"
+    created: "2024-02-28T21:08:58.013134411+08:00"
     description: A Helm chart for Kubernetes Hello-Word
-    digest: 878277a7eda33ea31d17aa2883daf7569425a102c4c2f1a44609e3095f538b4e
+    digest: b64aeddccd3064fe6fca17b1bc50f0c8af0a2fa1ab1dbe4bf4cd5c9708683c6e
+    name: hello-word
+    type: application
+    urls:
+    - hello-word-0.2.3.tgz
+    version: 0.2.3
+  - apiVersion: v2
+    appVersion: 1.24.0
+    created: "2024-02-28T21:08:58.007841011+08:00"
+    description: A Helm chart for Kubernetes Hello-Word
+    digest: 46a9fb7eb380d2dcfa5d199efcdac0b20584d84ad1f384f7dff60b0b790d9d8f
     name: hello-word
     type: application
     urls:
@@ -13,7 +23,7 @@ entries:
     version: 0.2.2
   - apiVersion: v2
     appVersion: 1.24.0
-    created: "2024-02-06T20:37:52.4580855+08:00"
+    created: "2024-02-28T21:08:58.002911511+08:00"
     description: A Helm chart for Kubernetes Hello-Word
     digest: bbad366c7ebc15aa135526732693a8f91738fed9eed2c369d9ae0f51b26a8b99
     name: hello-word
@@ -21,4 +31,4 @@ entries:
     urls:
     - hello-word-0.2.1.tgz
     version: 0.2.1
-generated: "2024-02-06T20:37:52.4528098+08:00"
+generated: "2024-02-28T21:08:57.997740411+08:00"
