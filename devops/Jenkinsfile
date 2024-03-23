@@ -1,0 +1,195 @@
+pipeline {
+    /* Ваши инструкции для конвейера */
+    /*
+    Раздел «agent» указывает, где будет выполняться труба Jenkins.
+    Раздел должен быть определен на верхнем уровне внутри блока «pipeline».
+    */
+    agent {
+         node {
+          label '192.168.0.16'
+       }
+    }
+
+    /*
+    Раздел «options» позволяет настраивать параметры конвейера непосредственно из Jenkinsfile.
+    Эти параметры также можно задавать в графическом интерфейсе Jenkins.
+    */
+    options {
+        ansiColor('xterm')
+        timestamps()
+        disableConcurrentBuilds()
+        timeout(time: 1, unit: 'HOURS')
+        buildDiscarder(logRotator(artifactDaysToKeepStr: '7', artifactNumToKeepStr: '10', daysToKeepStr: '7', numToKeepStr: '50'))
+    }
+
+    /*
+    Раздел «parameters» задает список параметров, которые пользователь должен предоставить при запуске трубы.
+    Заданные пользователем значения становятся доступными для шагов конвейера через объект params.
+    Я создам два булевых параметра, с помощью которых можно будет управлять запуском шагов конвейера:
+    */
+    parameters {
+        booleanParam(defaultValue: true, description: 'Build SSIS', name: 'BUILD')
+        booleanParam(defaultValue: false, description: 'Deploy SSIS', name: 'DEPLOY')
+    }
+
+    /*
+    Раздел «environment» определяет глобальные и локальные (в пределах конкретного «step») переменные
+    в Jenkinsfile. Глобальные переменные удобно использовать для подстановки статических значений:
+    */
+    environment {
+        /*
+        SSISBuildPath="C:\\SSIS_DEV_OPS\\SSISBuild.exe"
+        SSISDeployPath="C:\\SSIS_DEV_OPS\\ssisdeploy.exe"
+        SOLUTION = "AUDIT_Import_ALL\\AUDIT_Import_ALL.dtproj"
+        */
+        CHART_NAME="hello-word/"
+        CHART_VERSION="0.2.2"
+    }
+
+    /*
+    Раздел «stages» является местом, где будет происходить основная часть работы конвейера.
+    Раздел делится на этапы, которые содержат описание шагов. У меня будет три этапа:
+    */
+    stages {
+        // Извлекаем проект из Bitbucket
+        stage('Checkout') {
+            steps {
+                // Удаление всех файлов из рабочего каталога на сервере TestNode
+                sh 'find . -type f -delete'
+                // Удаление всех папок из рабочего каталога на сервере TestNode
+                sh 'find . -type d -delete'
+                // Вывод echo в консоль Jenkins
+                echo 'step Git Checkout'
+                // Извлечение из системы контроля версий в рабочий каталог на сервере TestNode
+                checkout scm
+                sh 'echo $(pwd) && ls -la'
+            }
+        }
+        // Собираем проект. Получаем на выходе пакетный файл AUDIT_Import_ALL.ispac
+        stage('Build') {
+            // Команда when позволяет конвейеру определять, следует ли выполнять этап в зависимости от
+            // заданного условия.
+            when {
+                // Заданное условие expression. Оно задается пользователем при запуске конвейера и передается
+                // в скрипт через параметр "BUILD"
+                expression {
+                    return params.BUILD
+                }
+            }
+            // Начало шага сборки SSIS-проекта
+            steps {
+                // Вызов функции PrintStage(). Её мы рассмотрим далее.
+                PrintStage()
+                echo "step Build Solution"
+                /* Вызов SSISBuild.exe на TestNode. Кстати, здесь применяется три подстановки:
+                 - переменная среды ${WORKSPACE} - абсолютный путь рабочей области.
+                 - глобальные переменные ${SSISBuildPath} и ${SOLUTION} - они задавались в разделе environment */
+                /*bat "${SSISBuildPath} -p:${WORKSPACE}\\${SOLUTION}"*/
+                sh "${WORKSPACE}"
+                sh "echo `pwd` && ls -la"
+                sh "helm package ${CHART_NAME}"
+                sh "tar tf hello-word-${CHART_VERSION}.tgz"
+                sh "helm repo index ."
+                sh "cat index.yaml"
+            }
+        }
+        // Загружаем архив с проектом на удаленный сервер. Деплоим его на MS SQL Server
+        stage("Deploy to Dev Env") {
+            when {
+                expression {
+                    return params.DEPLOY
+                }
+            }
+            steps {
+                PrintStage()
+                // Использование стандартного плагина Jenkins для архивации собранного SSIS-проекта
+                zip zipFile: 'archive.zip', archive: false
+                // Самое интересное. Для деплоя полученного файла будем применять службу удаленного управления
+                // Windows WinRM в PowerShell
+                // Используем учетную запись 'WINRM_PASS' для извлечения SecretText из Jenkins.
+                // Учетная запись заведена в Jenkins. Как её добавить я покажу ниже
+                withCredentials([string(credentialsId: 'WINRM_PASS', variable: 'WINRM_PASS')]) {
+                    // Применение скриптового синтаксиса внутри декларативного.
+                    script {
+                        // Определяем переменные
+                        //def err
+                        def stdout = sh label: 'deploy', returnStdout: true, script: '''
+                        echo "git -c credential.helper= -c core.quotepath=false -c log.showSignature=false push \
+                        --progress --porcelain origin refs/heads/master:master --tags"
+                        '''
+/*
+                        def stdout = powershell label: 'deploy', returnStdout: true, script: '''
+						# Задаем пароль учетной записи WinRM в SecureString 
+						$pw = convertto-securestring -AsPlainText -Force -String $env:WINRM_PASS
+						# Задаем учетные данные для создания сессии WinRM
+						$cred = new-object -typename System.Management.Automation.PSCredential -argumentlist "Domain\\User",$pw
+						# Открываем сессию
+						$s = New-PSSession -ComputerName <server> -Credential $cred
+						#Создаем папку на удаленном сервере для копирования архива
+						$remotePath = \'D:\\DIGAUD\\TestSSISPipeline\'
+						$job = Invoke-Command -Session $s `
+												-ScriptBlock {
+													if (!(Test-Path -Path \'D:\\DIGAUD\\TestSSISPipeline\')) {mkdir $Using:remotePath}
+													} `
+												-AsJob
+						Wait-Job $job 
+						$r = Receive-Job $job
+
+						# Копируем архив
+						$path = Get-Location
+						$dest = Join-Path $path "archive.zip" 
+						Copy-Item -Path $dest `
+									-Destination $remotePath `
+									-ToSession $s
+						
+						# Распаковываем архив
+						$job = Invoke-Command -Session $s `
+											  -ScriptBlock {
+												   Expand-Archive -LiteralPath \'D:\\Jenkins\\TestSSISPipeline\\archive.zip' -DestinationPath \'D:\\Jenkins\\TestSSISPipeline\'
+												  } `
+											  -AsJob
+						Wait-Job $job 
+						$r = Receive-Job $job
+						
+						#Деплоим
+						$job = Invoke-Command -Session $s `
+											  -ScriptBlock {
+													C:\\SSIS_DEV_OPS\\ssisdeploy.exe -s:\"D:\\Jenkins\\TestSSISPipeline\\AUDIT_Import_ALL\\bin\\Development\\AUDIT_Import_ALL.ispac\" -d:\"catalog;/SSISDB/AUDIT_Import_ALL;mssql_server,port\" -at:win 
+												   } `
+											  -AsJob
+						Wait-Job $job 
+						$r = Receive-Job $job
+						
+						Remove-PSsession $s
+					   '''
+*/
+                    }
+                }
+            }
+        }
+    }
+
+    /*
+    Раздел «post» определяет дополнительные действия, которые будут выполняться после завершения работы
+    основного кода конвейера или этапа (в зависимости где стоит post).
+    */
+    post {
+        // Код ниже будет выполнен вне зависимости от статуса сборки трубы или этапа
+        always {
+            script {
+                // Устанавливаю результат сборки трубы
+                currentBuild.result = currentBuild.result ?: 'SUCCESS'
+                // Уведомляю Bitbucket о результате сборки
+                notifyBitbucket()
+            }
+        }
+    }
+}
+
+// Метод, который принимает на вход один текстовый аргумент. По умолчанию аргумент пустой
+void PrintStage(String text=""){
+    // Применение тернарного оператора
+    // Если аргумент text пустой, в консоль Jenkins будет выведено десять звёздочек, название этапа, десять звёздочек
+    // Если аргумент text не пустой, в консоль Jenkins будет выведено его значение
+    text=="" ? println ('* '*10 + env.STAGE_NAME.toUpperCase() + " *"*10) : println (text)
+}
